@@ -70,6 +70,26 @@
     <string name="pref_category_history_display">履歴表示設定</string>
     <string name="show_thumbnail_background">サムネイル背景表示</string>
     <string name="show_empty_rules">0件ルールの表示</string>
+    <string name="show_card_description">カードに番組詳細を表示</string>
+    <string name="compatibility_mode">互換性モード</string>
+    <string name="compatibility_settings">互換性設定</string>
+    <string name="reduce_recording_load">同時取得件数の低減</string>
+    <string name="compatibility_mode_summary">最新録画1ページから上位ルールを先に表示し、残りの録画順を確認します。録画は可視行と先3行のみ各12件。行末の空カードで続きを取得します。番組表からの録画の続きはルール順確定後に取得します（EPGStation v2）。</string>
+    <string name="request_concurrency">取得並列数の変更</string>
+    <string name="request_concurrency_summary">EPGStation v2の一覧取得：%1$s。追加取得は別枠で最大2並列です。</string>
+    <string-array name="pref_options_request_concurrency_label">
+        <item>OFF（標準の5並列）</item>
+        <item>2並列</item>
+        <item>4並列</item>
+        <item>5並列</item>
+        <item>8並列</item>
+        <item>12並列</item>
+    </string-array>
+    <string name="shorten_card_content">カード内容の短縮</string>
+    <string name="shorten_card_content_summary">録画日時と録画時間だけを表示します。OFFにすると放送局名と番組詳細も表示します。</string>
+    <string name="rule_row_loading">録画を読み込み中</string>
+    <string name="rule_row_empty">録画がありません</string>
+    <string name="rule_row_error">取得できませんでした。選択して再試行</string>
     <string name="clear_history">検索履歴のクリア</string>
     <string name="history_cleared">検索履歴をクリアしました</string>
     <string name="pref_category_actions">操作</string>

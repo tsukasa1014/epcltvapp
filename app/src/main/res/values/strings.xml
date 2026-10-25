@@ -157,6 +157,34 @@
 
     <string name="pref_key_show_thumbnail_background" translatable="false">KEY_SHOW_THUMBNAIL_BACKGROUND</string>
     <string name="show_thumbnail_background">Thumbnail background</string>
+    <string name="pref_key_show_card_description" translatable="false">KEY_SHOW_CARD_DESCRIPTION</string>
+    <string name="show_card_description">Show program description on cards</string>
+    <string name="pref_key_compatibility_mode" translatable="false">KEY_COMPATIBILITY_MODE</string>
+    <string name="compatibility_mode">Compatibility mode</string>
+    <string name="compatibility_settings">Compatibility Settings</string>
+    <string name="reduce_recording_load">Reduce recordings loaded at once</string>
+    <string name="compatibility_mode_summary">On EPGStation v2, show recent rules from one recording page while checking the remaining rules. Load up to 12 cards per visible row and the next three rows. Focus the blank end card to load more. Manual recording pages wait until rule ordering is complete.</string>
+    <string name="pref_key_request_concurrency" translatable="false">KEY_REQUEST_CONCURRENCY</string>
+    <string name="request_concurrency">Request concurrency</string>
+    <string name="request_concurrency_summary">EPGStation v2 list loading: %1$s. Extra pages use a separate queue with up to 2 concurrent requests.</string>
+    <string-array name="pref_options_request_concurrency_label">
+        <item>Off (standard: 5 requests)</item>
+        <item>2 requests</item>
+        <item>4 requests</item>
+        <item>5 requests</item>
+        <item>8 requests</item>
+        <item>12 requests</item>
+    </string-array>
+    <string-array name="pref_options_request_concurrency_val" translatable="false">
+        <item>default</item>
+        <item>2</item><item>4</item><item>5</item><item>8</item><item>12</item>
+    </string-array>
+    <string name="pref_key_shorten_card_content" translatable="false">KEY_SHORTEN_CARD_CONTENT</string>
+    <string name="shorten_card_content">Shorten card content</string>
+    <string name="shorten_card_content_summary">Show the recording date and duration only. Turn off to also show the channel and program description.</string>
+    <string name="rule_row_loading">Loading recordings</string>
+    <string name="rule_row_empty">No recordings</string>
+    <string name="rule_row_error">Could not load. Select to retry.</string>
 
     <!-- Actions on the settings root screen -->
     <string name="pref_key_reload_action" translatable="false">pref_key_reload_action</string>

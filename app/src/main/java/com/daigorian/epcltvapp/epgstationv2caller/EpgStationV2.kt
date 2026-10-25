@@ -1,6 +1,7 @@
 package com.daigorian.epcltvapp.epgstationv2caller
 
 import com.bumptech.glide.load.model.LazyHeaders
+import com.daigorian.epcltvapp.RequestConcurrency
 import com.daigorian.epcltvapp.epgstationcaller.EpgStation
 import okhttp3.Credentials
 import okhttp3.Dispatcher
@@ -120,10 +121,28 @@ object EpgStationV2 {
 
 
 
+    /**
+     * [api] と認証有無で作り直す OkHttpClient が共有する Dispatcher。
+     * 並列数だけを変更し、HTTP client 自体は作り直さない。
+     */
+    private val requestDispatcher = Dispatcher().apply {
+        maxRequests = RequestConcurrency.DEFAULT
+        maxRequestsPerHost = RequestConcurrency.DEFAULT
+    }
+
+    @Volatile
+    private var requestConcurrencyValue: Int = RequestConcurrency.DEFAULT
+
+    /** 現在の EPGStation v2 取得並列数。 */
+    val requestConcurrency: Int
+        get() = requestConcurrencyValue
+
     private var okHttpClientBuilder = OkHttpClient.Builder()
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
         .writeTimeout(5, TimeUnit.SECONDS)
+        // 既定は5。最適な並列数はサーバーや回線によって変わる。
+        .dispatcher(requestDispatcher)
 
     var api: ApiInterface? = null
 
@@ -210,6 +229,17 @@ object EpgStationV2 {
         }
         val unconverted = profiles.indexOfFirst { it.isUnconverted }
         return if (unconverted >= 0) unconverted else 0
+    }
+
+    /**
+     * 既存 client の Dispatcher の上限だけを変更する。
+     * 不正値は [RequestConcurrency.DEFAULT] に戻し、実行中の call はキャンセルしない。
+     */
+    fun setRequestConcurrency(value: Int) {
+        val normalized = RequestConcurrency.fromValue(value)
+        requestConcurrencyValue = normalized
+        requestDispatcher.maxRequests = normalized
+        requestDispatcher.maxRequestsPerHost = normalized
     }
 
     fun initAPI(_baseUrl:String){

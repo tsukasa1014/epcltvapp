@@ -144,6 +144,31 @@
         </PreferenceCategory>
 
         <PreferenceCategory
+            app:title="@string/compatibility_settings">
+
+            <SwitchPreference
+                app:key=         "@string/pref_key_compatibility_mode"
+                app:defaultValue="false"
+                app:title=       "@string/reduce_recording_load"
+                app:summary=     "@string/compatibility_mode_summary" />
+
+            <ListPreference
+                app:key=         "@string/pref_key_request_concurrency"
+                app:defaultValue="default"
+                app:title=       "@string/request_concurrency"
+                app:entries=     "@array/pref_options_request_concurrency_label"
+                app:entryValues= "@array/pref_options_request_concurrency_val"
+                app:summary=     "@string/request_concurrency_summary" />
+
+            <SwitchPreference
+                app:key=         "@string/pref_key_shorten_card_content"
+                app:defaultValue="false"
+                app:title=       "@string/shorten_card_content"
+                app:summary=     "@string/shorten_card_content_summary" />
+
+        </PreferenceCategory>
+
+        <PreferenceCategory
             app:title="@string/pref_category_history_display">
 
             <SwitchPreference

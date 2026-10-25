@@ -124,6 +124,22 @@ class MainFragment : BrowseSupportFragment() {
      */
     private var mActiveRuleOrderCollector: RuleOrderCollector? = null
 
+    // --- 互換性モード（弱い端末・大量ルール向けの軽量読み込み） ---
+    /** 設定でONのとき、ルール行を必要になった分だけ作る。 */
+    private var mCompatibilityMode = false
+    private var mLazyRuleLoader: LazyRuleRecordingLoader? = null
+    private var mManualRecordingPager: ManualRecordingPager? = null
+    private var mUserInteractionSerial = 0L
+    private val mRowCardSelections = HashMap<Long, Pair<Any, Int>>()
+    private var mRuleLoadGeneration = 0L
+    /** ルールID → 行タイトル（キーワード or ルールID表記）。 */
+    private val mRuleRowKeyword = HashMap<Long, String>()
+
+    /** 互換性モードが有効か。 */
+    private fun isCompatibilityMode(): Boolean =
+        androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
+            .getBoolean(getString(R.string.pref_key_compatibility_mode), false)
+
     private val mCardPresenter = OriginalCardPresenter()
     private val mMainMenuListRowPresenter = ListRowPresenter()
     private val mMainMenuAdapter = MainMenuAdapter(mMainMenuListRowPresenter)
@@ -176,7 +192,30 @@ class MainFragment : BrowseSupportFragment() {
                 val showEmptyRules = prefs.getBoolean(getString(R.string.pref_key_show_empty_rules), true)
                 Log.d(TAG, "prefChanged: show_empty_rules=$showEmptyRules adapterSize=${mMainMenuAdapter.size()}")
                 setSelectedPosition(0, false)
-                if (showEmptyRules) updateRows() else mMainMenuAdapter.removeEmptyRuleRows()
+                val lazyLoader = mLazyRuleLoader
+                if (lazyLoader != null) lazyLoader.setShowEmpty(showEmptyRules)
+                else if (showEmptyRules) updateRows() else mMainMenuAdapter.removeEmptyRuleRows()
+            }
+            getString(R.string.pref_key_compatibility_mode) -> reloadContentRows()
+            getString(R.string.pref_key_request_concurrency) -> {
+                EpgStationV2.setRequestConcurrency(CompatibilityPreferences.requestConcurrency(requireContext()))
+                Log.i(TAG, "取得並列数を変更 concurrency=${EpgStationV2.requestConcurrency} priority=2")
+                mLazyRuleLoader?.onConcurrencyChanged()
+            }
+            getString(R.string.pref_key_shorten_card_content) -> {
+                // Rebind only attached cards; no refetch or full adapter rebuild.
+                val grid = rowsSupportFragment?.verticalGridView
+                grid?.post {
+                    if (isUiAlive) {
+                        for (i in 0 until grid.childCount) {
+                            val position = grid.getChildAdapterPosition(grid.getChildAt(i))
+                            val row = if (position in 0 until mMainMenuAdapter.size()) mMainMenuAdapter.get(position) as? ListRow else null
+                            (row?.adapter as? ArrayObjectAdapter)?.let { cards ->
+                                if (cards.size() > 0) cards.notifyArrayItemRangeChanged(0, cards.size())
+                            }
+                        }
+                    }
+                }
             }
             getString(R.string.pref_key_num_of_history) -> {
                 // 件数が変わっただけなので、履歴の行だけを作り直す
@@ -209,9 +248,14 @@ class MainFragment : BrowseSupportFragment() {
 
         adapter = mMainMenuAdapter
         mCardPresenter.objAdapter = mMainMenuAdapter
-        // ホームでカードを長押しして消したときは画面を離れないので、ここで空きの変化を拾う
-        mCardPresenter.onRecordedDeleted = { refreshDiskUsage() }
+        mCardPresenter.onRecordedDeleted = { id ->
+            mLazyRuleLoader?.removeRecorded(id)
+            mManualRecordingPager?.removeRecorded(id)
+            refreshDiskUsage()
+        }
 
+        CompatibilityPreferences.migrate(requireContext())
+        EpgStationV2.setRequestConcurrency(CompatibilityPreferences.requestConcurrency(requireContext()))
         // プレイヤー設定などデフォルト値をSharedPreferencesに書き込む（初回のみ）
         androidx.preference.PreferenceManager.setDefaultValues(requireContext(), R.xml.preferences, false)
 
@@ -346,9 +390,18 @@ class MainFragment : BrowseSupportFragment() {
     }
 
     override fun onDestroy() {
+        mLazyRuleLoader?.close()
+        mManualRecordingPager?.close()
         super.onDestroy()
         Log.d(TAG, "onDestroy: " + mBackgroundTimer?.toString())
         mBackgroundTimer?.cancel()
+    }
+
+    override fun onDestroyView() {
+        resetRuleRowLoading()
+        if (mHasLoadedOnce) mNeedsReloadAllOnResume = true
+        mVisibleSweepInstalled = false
+        super.onDestroyView()
     }
 
     private fun initEPGStationApi(){
@@ -463,13 +516,7 @@ class MainFragment : BrowseSupportFragment() {
         })
     }
 
-    /**
-     * 各行を読み込む。
-     *
-     * @param includeRules 録画ルールの行も取り直すか。画面に戻ってきただけのときは false にする——
-     *        ルールが1125件ある環境では全件の取り直しに1分近くかかり、その間ずっと「読み込み中」になるため。
-     *        ルールの録画を取り直したいときは設定の「録画の再読み込み」（reloadContentRows）を使う。
-     */
+    /** Reload rule rows only when explicitly requested, not when returning from playback. */
     private fun updateRows(includeRules: Boolean = true) {
 
         EpgStationV2.api?.let { api ->
@@ -622,11 +669,12 @@ class MainFragment : BrowseSupportFragment() {
 
         //ルール一覧の並び順。既定は「ルールの新しい順」。
         val ruleSortMode = currentRuleSortMode()
+        val ruleLoadGeneration = mRuleLoadGeneration
 
         //次の横の列。録画ルール。録画ルールの数だけ行が増える。
         EpgStation.api?.getRulesList()?.enqueue(object : Callback<List<RuleList>> {
             override fun onResponse(call: Call<List<RuleList>>, response: Response<List<RuleList>>) {
-                if (!isUiAlive) return
+                if (!isUiAlive || ruleLoadGeneration != mRuleLoadGeneration) return
                 response.body()?.let{ it ->
                     // 受け取った順のまま持ち、表示順は RuleOrder に決めさせる。
                     val ruleIdsInServerOrder = it.map { rule -> rule.id.toLong() }
@@ -690,7 +738,7 @@ class MainFragment : BrowseSupportFragment() {
         })
         EpgStationV2.api?.getRules(limit=Int.MAX_VALUE)?.enqueue(object : Callback<Rules> {
             override fun onResponse(call: Call<Rules>, response: Response<Rules>) {
-                if (!isUiAlive) return
+                if (!isUiAlive || ruleLoadGeneration != mRuleLoadGeneration) return
                 response.body()?.rules?.let{ rules ->
                     // EPGStation は rule.id の昇順で返す。受け取った順のまま持ち、表示順は RuleOrder に決めさせる。
                     val ruleIdsInServerOrder = rules.map { rule -> rule.id.toLong() }
@@ -702,32 +750,72 @@ class MainFragment : BrowseSupportFragment() {
                     // 足す順も orderedIds に合わせる。行を足すと同時にそのルールの録画を取りに行くので、
                     // 上に来るルール（最近録画されたもの）の録画が先に届き、開いてすぐ見られる。
                     val ruleById = rules.associateBy { rule -> rule.id }
-                    val addRows: (List<Long>) -> Unit = { orderedIds ->
-                        // 一度に1125行を足すと main スレッドが数秒占有されて画面が固まる。
-                        // 少しずつ足して main ループに戻し、上の列から先に表示・取得されるようにする。
-                        addRuleRowsChunked(orderedIds) { ruleId ->
-                            val rule = ruleById[ruleId]
-                            if (rule == null) {
-                                Log.i(TAG, "addRows: ルール $ruleId の定義が見つからないので飛ばす")
-                                return@addRuleRowsChunked
-                            }
-
-                            //録画ルールにキーワードが設定されていない場合、キーワードの代わりにルールIDをセット
-                            val keyword:String = if ( rule.searchOption?.keyword.isNullOrEmpty() ){
+                    // 互換性モードの判定と、行タイトル（キーワード or ルールID表記）の控え。
+                    mCompatibilityMode = isCompatibilityMode()
+                    mRuleRowKeyword.clear()
+                    rules.forEach { rule ->
+                        mRuleRowKeyword[rule.id.toLong()] =
+                            if (rule.searchOption?.keyword.isNullOrEmpty()) {
                                 getString(R.string.rule_id_is_x, rule.id.toString())
-                            }else{
+                            } else {
                                 rule.searchOption?.keyword!!
                             }
-                            mMainMenuAdapter.updateContentsListRowWithCategory(
-                                GetRecordedParam(rule = rule.id, limit = RULE_ROW_INITIAL_LIMIT),
-                                GetRecordedParamV2(ruleId = rule.id, limit = RULE_ROW_INITIAL_LIMIT),
-                                keyword,
-                                Category.RECORDED_BY_RULES,
-                                rule.id,
-                                orderedIds,
-                                ruleOrder
-                            )
-                        }
+                    }
+                    if (mCompatibilityMode) {
+                        mLazyRuleLoader?.close()
+                        mManualRecordingPager?.close()
+                        ensureManualRecordedRow()
+                        val manualAdapter = mMainMenuAdapter.getListRowByHeaderId(
+                            Category.MANUAL_RECORDED.ordinal.toLong() * 10000
+                        )!!.adapter as ArrayObjectAdapter
+                        val pager = ManualRecordingPager(manualAdapter,
+                            { isUiAlive && ruleLoadGeneration == mRuleLoadGeneration },
+                            { scheduleVisibleSweep() })
+                        mManualRecordingPager = pager
+                        val loader = LazyRuleRecordingLoader(
+                            ruleIdsInServerOrder, mRuleRowKeyword, mCardPresenter,
+                            Category.RECORDED_BY_RULES.ordinal.toLong() * 10000,
+                            { isUiAlive && ruleLoadGeneration == mRuleLoadGeneration },
+                            { rows ->
+                                val anchor = captureRuleSelection()
+                                if (mMainMenuAdapter.setRuleRows(rows)) restoreRuleSelection(anchor)
+                            },
+                            { page -> pager.acceptSeed(page) },
+                            { pending -> pager.setRuleOrderPending(pending) },
+                            { scheduleVisibleSweep() }
+                        )
+                        mLazyRuleLoader = loader
+                        loader.setShowEmpty(PreferenceManager.getDefaultSharedPreferences(requireContext())
+                            .getBoolean(getString(R.string.pref_key_show_empty_rules), true))
+                        loader.setSortMode(currentRuleSortMode())
+                        return@let
+                    }
+                    val addRows: (List<Long>) -> Unit = { orderedIds ->
+                            // 一度に1125行を足すと main スレッドが数秒占有されて画面が固まる。
+                            // 少しずつ足して main ループに戻し、上の列から先に表示・取得されるようにする。
+                            addRuleRowsChunked(orderedIds) { ruleId ->
+                                val rule = ruleById[ruleId]
+                                if (rule == null) {
+                                    Log.i(TAG, "addRows: ルール $ruleId の定義が見つからないので飛ばす")
+                                    return@addRuleRowsChunked
+                                }
+
+                                //録画ルールにキーワードが設定されていない場合、キーワードの代わりにルールIDをセット
+                                val keyword:String = if ( rule.searchOption?.keyword.isNullOrEmpty() ){
+                                    getString(R.string.rule_id_is_x, rule.id.toString())
+                                }else{
+                                    rule.searchOption?.keyword!!
+                                }
+                                mMainMenuAdapter.updateContentsListRowWithCategory(
+                                    GetRecordedParam(rule = rule.id, limit = RULE_ROW_INITIAL_LIMIT),
+                                    GetRecordedParamV2(ruleId = rule.id, limit = RULE_ROW_INITIAL_LIMIT),
+                                    keyword,
+                                    Category.RECORDED_BY_RULES,
+                                    rule.id,
+                                    orderedIds,
+                                    ruleOrder
+                                )
+                            }
                     }
 
                     if (ruleSortMode == RuleOrder.MODE_RECORDING_NEWEST) {
@@ -761,6 +849,7 @@ class MainFragment : BrowseSupportFragment() {
 
     private fun loadRows() {
         mHasLoadedOnce = true
+        resetRuleRowLoading()
 
         //内容クリア
         mMainMenuAdapter.clear()
@@ -775,6 +864,7 @@ class MainFragment : BrowseSupportFragment() {
 
     /** コンテンツ行をクリアして再読み込みする */
     private fun reloadContentRows() {
+        resetRuleRowLoading()
         listOf(Category.LIVE_CHANNELS, Category.ON_RECORDING, Category.RECENTLY_RECORDED, Category.MANUAL_RECORDED, Category.SEARCH_HISTORY, Category.RECORDED_BY_RULES)
             .forEach { mMainMenuAdapter.deleteCategory(it) }
         // 行を作り直すので、取り直した時刻の控えも捨てる（消えたルールの分を残さない）
@@ -783,19 +873,26 @@ class MainFragment : BrowseSupportFragment() {
         refreshDiskUsage()
     }
 
-    /**
-     * ルール行を ids の順に、少しずつ足す。
-     *
-     * 1125件を一度に足すと、行の生成と1ルール分の取得依頼だけで main スレッドが数秒占有され、
-     * その間は画面がまったく更新されない（上の方の列の録画も出てこない）。
-     * 小さく区切って main ループに戻すことで、上の列から先に表示・取得される。
-     */
+    /** Reloaded rows must not inherit the previous load's materialized IDs. */
+    private fun resetRuleRowLoading() {
+        mRuleLoadGeneration++
+        mLazyRuleLoader?.close()
+        mLazyRuleLoader = null
+        mManualRecordingPager?.close()
+        mManualRecordingPager = null
+        mRowCardSelections.clear()
+        mCompatibilityMode = false
+        mActiveRuleOrderCollector = null
+        mRuleRowKeyword.clear()
+    }
+
     private fun addRuleRowsChunked(ids: List<Long>, addOne: (Long) -> Unit) {
+        val generation = mRuleLoadGeneration
         var index = 0
         val step = object : Runnable {
             override fun run() {
                 // 画面から離れた後に続きを足さない
-                if (!isUiAlive) return
+                if (!isUiAlive || generation != mRuleLoadGeneration) return
                 val end = minOf(index + RULE_ROW_CHUNK_SIZE, ids.size)
                 while (index < end) {
                     addOne(ids[index])
@@ -818,6 +915,7 @@ class MainFragment : BrowseSupportFragment() {
      * 並びが既に目標と同じときは何もしない（並べ替えのための再描画も起きない）。
      */
     private fun applyRuleOrder() {
+        mLazyRuleLoader?.let { it.setSortMode(currentRuleSortMode()); return }
         val collector = mActiveRuleOrderCollector ?: return
         val mode = currentRuleSortMode()
         val orderedIds = collector.orderedRuleIds(mode)
@@ -880,6 +978,9 @@ class MainFragment : BrowseSupportFragment() {
                 override fun onChildViewDetachedFromWindow(view: View) = scheduleVisibleSweep()
             }
         )
+        grid.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = scheduleVisibleSweep()
+        })
         mVisibleSweepInstalled = true
         Log.i(TAG, "可視行の取り直しを仕掛けた")
     }
@@ -919,6 +1020,29 @@ class MainFragment : BrowseSupportFragment() {
         // グリッドが現れる前に呼ばれると上で帰るので、実際に掃くところまで来てから下ろす。
         val ignoreCooldown = mForceNextVisibleSweep
         mForceNextVisibleSweep = false
+        mLazyRuleLoader?.let { loader ->
+            val positions = (0 until grid.childCount).mapNotNull { i ->
+                val child = grid.getChildAt(i)
+                val position = grid.getChildAdapterPosition(child)
+                if (child.bottom > grid.paddingTop && child.top < grid.height - grid.paddingBottom &&
+                    position in 0 until mMainMenuAdapter.size()) position else null
+            }
+            val target = linkedSetOf<Long>()
+            positions.sorted().forEach { position ->
+                val row = mMainMenuAdapter.get(position) as? ListRow
+                row?.headerItem?.id?.let { ruleIdFromHeaderId(it) }?.let { target.add(it) }
+            }
+            var following = (positions.maxOrNull() ?: selectedPosition) + 1
+            var prefetched = 0
+            while (following < mMainMenuAdapter.size() && prefetched < 3) {
+                val row = mMainMenuAdapter.get(following++) as? ListRow ?: continue
+                val id = ruleIdFromHeaderId(row.headerItem.id) ?: continue
+                target.add(id)
+                prefetched++
+            }
+            loader.updateViewport(target)
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val refreshedRuleIds = ArrayList<Long>()
         var visibleRuleRows = 0
@@ -1037,6 +1161,62 @@ class MainFragment : BrowseSupportFragment() {
         }
     }
 
+    private data class RuleSelection(
+        val rowId: Long, val recordId: Long?, val item: Any?, val cardPosition: Int?, val cardsFocused: Boolean
+    )
+
+    private fun horizontalGridAt(rowPosition: Int): HorizontalGridView? {
+        val bridge = rowsSupportFragment?.verticalGridView
+            ?.findViewHolderForAdapterPosition(rowPosition) as? ItemBridgeAdapter.ViewHolder ?: return null
+        // Leanback wraps ListRow holders in RowPresenter.ContainerViewHolder.
+        return (mMainMenuListRowPresenter.getRowViewHolder(bridge.viewHolder) as? ListRowPresenter.ViewHolder)?.gridView
+    }
+
+    private fun captureRuleSelection(): RuleSelection? {
+        val rowId = selectedRowHeaderId() ?: return null
+        val row = mMainMenuAdapter.getListRowByHeaderId(rowId) ?: return null
+        val grid = rowsSupportFragment?.verticalGridView
+        val horizontal = horizontalGridAt(selectedPosition)
+        val tracked = mRowCardSelections[rowId]
+        val position = horizontal?.selectedPosition?.takeIf { it in 0 until row.adapter.size() } ?: tracked?.second
+        val item = position?.takeIf { it in 0 until row.adapter.size() }?.let { row.adapter.get(it) } ?: tracked?.first
+        val recordId = when (item) {
+            is RecordedItem -> item.id
+            is RecordedProgram -> item.id.toLong()
+            else -> null
+        }
+        return RuleSelection(rowId, recordId, item, position, grid?.hasFocus() == true)
+    }
+
+    private fun restoreRuleSelection(anchor: RuleSelection?) {
+        if (anchor == null) return
+        val rowPosition = mMainMenuAdapter.indexOfListRowByHeaderId(anchor.rowId)
+        if (rowPosition < 0) return
+        val row = mMainMenuAdapter.get(rowPosition) as ListRow
+        val exact = (0 until row.adapter.size()).firstOrNull { index ->
+            val item = row.adapter.get(index)
+            if (anchor.recordId != null) when (item) {
+                is RecordedItem -> item.id == anchor.recordId
+                is RecordedProgram -> item.id.toLong() == anchor.recordId
+                else -> false
+            } else item == anchor.item
+        }
+        val cardPosition = exact ?: anchor.cardPosition?.coerceAtMost(row.adapter.size() - 1)?.takeIf { it >= 0 }
+        val task = cardPosition?.let { ListRowPresenter.SelectItemViewHolderTask(it).apply { setSmoothScroll(false) } }
+        setSelectedPosition(rowPosition, false, task)
+        Log.i(TAG, "ルール順更新の選択復元 rowId=${anchor.rowId} recordId=${anchor.recordId} card=$cardPosition")
+        if (anchor.cardsFocused && cardPosition != null) {
+            val serial = mUserInteractionSerial
+            val generation = mRuleLoadGeneration
+            rowsSupportFragment?.verticalGridView?.post {
+                if (!isUiAlive || generation != mRuleLoadGeneration || serial != mUserInteractionSerial ||
+                    selectedRowHeaderId() != anchor.rowId) return@post
+                val horizontal = horizontalGridAt(rowPosition)
+                horizontal?.findViewHolderForAdapterPosition(cardPosition)?.itemView?.requestFocus()
+            }
+        }
+    }
+
     /**
      * 画面に戻ってきたとき、Leanback が選んでいた行とは違う行へ復元してしまうのを戻す。
      *
@@ -1088,6 +1268,7 @@ class MainFragment : BrowseSupportFragment() {
 
     /** [scheduleSelectionRestore] が待っている間に、利用者が自分で操作したことを伝える。 */
     fun onUserInteractionByUser() {
+        mUserInteractionSerial++
         if (mRestorePending) mUserInteractedWhileRestorePending = true
     }
 
@@ -1149,12 +1330,15 @@ class MainFragment : BrowseSupportFragment() {
      *        第1引数は ruleId → 最新 startAt、第2引数はここまでに拾った番組表からの予約の録画。
      */
     private fun fetchLatestRecordedSeed(onReady: (Map<Long, Long>, List<Any>) -> Unit) {
+        val generation = mRuleLoadGeneration
+        fun current() = isUiAlive && generation == mRuleLoadGeneration
         val seed = HashMap<Long, Long>()
         /** 番組表から直接予約して録画されたもの（ruleId なし）。ページをまたいで新しい順に貯める。 */
         val manualRecorded = ArrayList<Any>()
 
         /** 1ページ取り、(ruleId, startAt) の組・番組表予約の録画・「ページが埋まっていたか」を返す。 */
         fun requestPage(page: Int, onPage: (List<Pair<Long, Long>>, List<Any>, Boolean) -> Unit) {
+            if (!current()) return
             val offset = page.toLong() * AGGREGATE_PAGE_LIMIT
             val limit = AGGREGATE_PAGE_LIMIT.toLong()
 
@@ -1163,7 +1347,7 @@ class MainFragment : BrowseSupportFragment() {
                 apiV2.getRecorded(isHalfWidth = true, offset = offset, limit = limit, isReverse = false)
                     .enqueue(object : Callback<Records> {
                         override fun onResponse(call: Call<Records>, response: Response<Records>) {
-                            if (!isUiAlive) return
+                            if (!current()) return
                             val records = response.body()?.records.orEmpty()
                             onPage(
                                 records.mapNotNull { r -> r.ruleId?.let { id -> id to r.startAt } },
@@ -1174,7 +1358,7 @@ class MainFragment : BrowseSupportFragment() {
 
                         override fun onFailure(call: Call<Records>, t: Throwable) {
                             Log.i(TAG, "ruleOrderSeed: ${page + 1}ページ目で失敗 ${t.javaClass.simpleName}")
-                            if (isUiAlive) onPage(emptyList(), emptyList(), false)
+                            if (current()) onPage(emptyList(), emptyList(), false)
                         }
                     })
                 return
@@ -1189,7 +1373,7 @@ class MainFragment : BrowseSupportFragment() {
             apiV1.getRecorded(limit = limit, offset = offset, reverse = false)
                 .enqueue(object : Callback<GetRecordedResponse> {
                     override fun onResponse(call: Call<GetRecordedResponse>, response: Response<GetRecordedResponse>) {
-                        if (!isUiAlive) return
+                        if (!current()) return
                         val records = response.body()?.recorded.orEmpty()
                         onPage(
                             records.mapNotNull { r -> r.ruleId?.let { id -> id to r.startAt } },
@@ -1200,13 +1384,15 @@ class MainFragment : BrowseSupportFragment() {
 
                     override fun onFailure(call: Call<GetRecordedResponse>, t: Throwable) {
                         Log.i(TAG, "ruleOrderSeed: ${page + 1}ページ目で失敗 ${t.javaClass.simpleName}")
-                        if (isUiAlive) onPage(emptyList(), emptyList(), false)
+                        if (current()) onPage(emptyList(), emptyList(), false)
                     }
                 })
         }
 
         fun fetchPage(page: Int) {
+            if (!current()) return
             requestPage(page) { pairs, manual, pageFull ->
+                if (!current()) return@requestPage
                 // startAt の降順で返るので、まだ知らないルールにとっての最初の1件がそのルールの最新
                 pairs.forEach { (ruleId, startAt) -> if (!seed.containsKey(ruleId)) seed[ruleId] = startAt }
                 manualRecorded.addAll(manual)
@@ -1827,6 +2013,8 @@ class MainFragment : BrowseSupportFragment() {
         ) {
 
             when (item) {
+                is ManualRecordingContinuation -> mManualRecordingPager?.retry()
+                is RuleRowPlaceholder -> mLazyRuleLoader?.retry(item.ruleId)
                 is RecordedProgram -> {
                     // EPGStation Version 1.x.x のアイテム
                     Log.d(TAG, "Item: $item")
@@ -1875,6 +2063,14 @@ class MainFragment : BrowseSupportFragment() {
             itemViewHolder: Presenter.ViewHolder?, item: Any?,
             rowViewHolder: RowPresenter.ViewHolder, row: Row
         ) {
+            val cardPosition = (rowViewHolder as? ListRowPresenter.ViewHolder)?.gridView?.selectedPosition
+            if (item != null && cardPosition != null && cardPosition >= 0) {
+                row.headerItem?.id?.let { mRowCardSelections[it] = item to cardPosition }
+            }
+            mManualRecordingPager?.onSelected(item)
+            ruleIdFromHeaderId(row.headerItem?.id ?: -1)?.let { id ->
+                mLazyRuleLoader?.onCardSelected(id, item)
+            }
             when (item) {
                 is RecordedProgram -> {
                     // EPGStation Version 1.x.x
@@ -2076,6 +2272,36 @@ class MainFragment : BrowseSupportFragment() {
     private inner class MainMenuAdapter(presenter: Presenter?) : DeleteEnabledArrayObjectAdapter(presenter) {
 
         private val numOfRowInCategory = IntArray(Category.values().size)
+
+        fun setRuleRows(rows: List<ListRow>): Boolean {
+            val category = Category.RECORDED_BY_RULES
+            val previous = listRowsInCategory(category)
+            if (previous == rows) return false
+            val kept = rows.toHashSet()
+            if (rows == previous.filter { it in kept }) {
+                previous.filter { it !in kept }.forEach {
+                    removeRowFromCategory(category, it.headerItem.id)
+                }
+                return true
+            }
+            val start = numOfRowInCategory.copyOfRange(0, category.ordinal).sum()
+            val oldCount = numOfRowInCategory[category.ordinal]
+            val section = if (oldCount >= 2) listOf(get(start), get(start + 1)) else listOf(
+                DividerRow(), SectionRow(HeaderItem(-category.ordinal.toLong(), getString(R.string.by_rec_rules))))
+            val items: List<Any> = if (rows.isEmpty()) emptyList() else section + rows
+            val updated = (0 until size()).map { get(it) }.toMutableList()
+            updated.subList(start, start + oldCount).clear()
+            updated.addAll(start, items)
+            numOfRowInCategory[category.ordinal] = items.size
+            // Preserve row/card adapters and let Leanback track moved identities in one diff update.
+            val started = SystemClock.elapsedRealtime()
+            super.setItems(updated, object : DiffCallback<Any>() {
+                override fun areItemsTheSame(oldItem: Any, newItem: Any) = oldItem === newItem
+                override fun areContentsTheSame(oldItem: Any, newItem: Any) = oldItem === newItem
+            })
+            Log.i(TAG, "ルール行の差分更新 rows=${rows.size} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+            return true
+        }
 
         override fun clear() {
             synchronized(this) {
@@ -2281,26 +2507,8 @@ class MainFragment : BrowseSupportFragment() {
                     if (!isUiAlive) return
                     response.body()?.let { getRecordedResponse ->
 
-                        //既存のリストにあって、レスポンスにないアイテムの削除
-                        var horizontalIndex = 0
-                        while(horizontalIndex < listRowAdapter.size()) {
-                            var found = false
-                            getRecordedResponse.recorded.forEach {
-                                if(listRowAdapter.get(horizontalIndex).equals(it) ) found = true
-                            }
-                            if (!found) {
-                                listRowAdapter.removeItems(horizontalIndex,1)
-                            }else {
-                                horizontalIndex += 1
-                            }
-                        }
-
-                        //レスポンスにあって、既存のリストにないアイテムの追加
-                        getRecordedResponse.recorded.forEachIndexed { index, it ->
-                            if(listRowAdapter.indexOf(it) == -1){
-                                listRowAdapter.add(index,it)
-                            }
-                        }
+                        // 返却順を保ち、既存カードのIDを使った差分でまとめて反映する。
+                        updateRecordedRow(listRowAdapter, getRecordedResponse.recorded)
 
                         // 「最近の録画」が最初に取れた時点で、番組表から予約した録画（ruleId なし）の行を出す。
                         // 中身の確定は下ごしらえ（fetchLatestRecordedSeed）が担うので、ここは行を出すだけ。
@@ -2370,26 +2578,8 @@ class MainFragment : BrowseSupportFragment() {
                     if (!isUiAlive) return
                     response.body()?.let { getRecordedResponse ->
 
-                        //既存のリストにあって、レスポンスにないアイテムの削除
-                        var horizontalIndex = 0
-                        while(horizontalIndex < listRowAdapter.size()) {
-                            var found = false
-                            getRecordedResponse.records.forEach {
-                                if(listRowAdapter.get(horizontalIndex).equals(it) ) found = true
-                            }
-                            if (!found) {
-                                listRowAdapter.removeItems(horizontalIndex,1)
-                            }else {
-                                horizontalIndex += 1
-                            }
-                        }
-
-                        //レスポンスにあって、既存のリストにないアイテムの追加
-                        getRecordedResponse.records.forEachIndexed { index, it ->
-                            if(listRowAdapter.indexOf(it) == -1){
-                                listRowAdapter.add(index,it)
-                            }
-                        }
+                        // 返却順を保ち、既存カードのIDを使った差分でまとめて反映する。
+                        updateRecordedRow(listRowAdapter, getRecordedResponse.records)
                         // 「最近の録画」が最初に取れた時点で、番組表から予約した録画（ruleId なし）の行を出す。
                         // 中身の確定は下ごしらえ（fetchLatestRecordedSeed）が担うので、ここは行を出すだけ。
                         if (category == Category.RECENTLY_RECORDED) {
@@ -2494,22 +2684,14 @@ class MainFragment : BrowseSupportFragment() {
                     addToCategory(cat, item)
                     return
                 }
-                val myOrderIndex = orderIndexOf(orderedIds, idInCategory)
+                // 構築中は末尾に足すだけにする。
+                // 正しい位置へ挿し込むと、その下の行がすべて動いて Leanback が pending move を積む。
+                // スクロール中は pending move 1件ごとに findViewByPosition が子ビュー数ぶん走る（O(子ビュー²)）ため、
+                // 1174 行を1件ずつ挿すと main スレッドが数十秒戻ってこなくなる（実機の ANR がこれ）。
+                // 並び順は構築の最後に reorderCategory で1回だけ確定させる。
                 val catStart = numOfRowInCategory.copyOfRange(0, cat.ordinal).sum()
-                val headerRows = 2 // DividerRow + SectionRow
-                val ruleStart = catStart + headerRows
                 val ruleEnd = catStart + numOfRowInCategory[cat.ordinal]
-                var insertPos = ruleEnd
-                for (i in ruleStart until ruleEnd) {
-                    val row = get(i) as? ListRow ?: continue
-                    val existingId = row.headerItem.id - cat.ordinal.toLong() * 10000
-                    val existingOrderIndex = orderIndexOf(orderedIds, existingId)
-                    if (myOrderIndex != -1 && (existingOrderIndex == -1 || existingOrderIndex > myOrderIndex)) {
-                        insertPos = i
-                        break
-                    }
-                }
-                super.add(insertPos, item)
+                super.add(ruleEnd, item)
                 numOfRowInCategory[cat.ordinal]++
             }
         }
@@ -2551,8 +2733,9 @@ class MainFragment : BrowseSupportFragment() {
                 }
                 if (sorted == rows) return false
 
+                // 1件ずつ add すると通知も行数ぶん出る。同じ差し替えが通知2回で済む。
                 super.removeItems(first, rows.size)
-                sorted.forEachIndexed { index, row -> super.add(first + index, row) }
+                super.addAll(first, sorted)
                 return true
             }
         }
@@ -2582,6 +2765,13 @@ class MainFragment : BrowseSupportFragment() {
     }
 
     private open inner class IconRowHeaderPresenter : RowHeaderPresenter() {
+        override fun onCreateViewHolder(parent: ViewGroup): Presenter.ViewHolder =
+            super.onCreateViewHolder(parent).also { holder ->
+                // lb_row_header lacks the focusable root provided by the default lb_header.
+                holder.view.isFocusable = true
+                holder.view.isFocusableInTouchMode = true
+            }
+
         override fun onBindViewHolder(viewHolder: Presenter.ViewHolder, item: Any?) {
             super.onBindViewHolder(viewHolder, item)
             val row = item as? Row ?: return
