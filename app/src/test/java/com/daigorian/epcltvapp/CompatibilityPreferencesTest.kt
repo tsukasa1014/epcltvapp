@@ -5,20 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CompatibilityPreferencesTest {
-    @Test fun fireOs5UsesShortCardsInitially() {
-        assertTrue(CompatibilityPreferences.shouldAutoShortenCards(true, 22))
+    @Test fun api25AndOlderUsesShortCardsInitially() {
+        listOf(22, 23, 24, 25).forEach { assertTrue(CompatibilityPreferences.shouldAutoShortenCards(it)) }
     }
 
-    @Test fun fireOs6UsesShortCardsInitially() {
-        assertTrue(CompatibilityPreferences.shouldAutoShortenCards(true, 25))
-    }
-
-    @Test fun newerFireTvDefaultsToOff() {
-        listOf(26, 28, 30).forEach { assertFalse(CompatibilityPreferences.shouldAutoShortenCards(true, it)) }
-    }
-
-    @Test fun otherAndroidTvDefaultsToOff() {
-        assertFalse(CompatibilityPreferences.shouldAutoShortenCards(false, 25))
+    @Test fun api26AndNewerDefaultsToOff() {
+        listOf(26, 28, 30, 34).forEach { assertFalse(CompatibilityPreferences.shouldAutoShortenCards(it)) }
     }
 
     @Test fun unsetUsesDeviceDefault() {
