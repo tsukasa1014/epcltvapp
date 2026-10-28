@@ -157,8 +157,6 @@
 
     <string name="pref_key_show_thumbnail_background" translatable="false">KEY_SHOW_THUMBNAIL_BACKGROUND</string>
     <string name="show_thumbnail_background">Thumbnail background</string>
-    <string name="pref_key_show_card_description" translatable="false">KEY_SHOW_CARD_DESCRIPTION</string>
-    <string name="show_card_description">Show program description on cards</string>
     <string name="pref_key_compatibility_mode" translatable="false">KEY_COMPATIBILITY_MODE</string>
     <string name="compatibility_mode">Compatibility mode</string>
     <string name="compatibility_settings">Compatibility Settings</string>

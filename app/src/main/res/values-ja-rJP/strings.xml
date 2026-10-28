@@ -70,7 +70,6 @@
     <string name="pref_category_history_display">履歴表示設定</string>
     <string name="show_thumbnail_background">サムネイル背景表示</string>
     <string name="show_empty_rules">0件ルールの表示</string>
-    <string name="show_card_description">カードに番組詳細を表示</string>
     <string name="compatibility_mode">互換性モード</string>
     <string name="compatibility_settings">互換性設定</string>
     <string name="reduce_recording_load">同時取得件数の低減</string>

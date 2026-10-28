@@ -22,42 +22,22 @@ class CompatibilityPreferencesTest {
     }
 
     @Test fun unsetUsesDeviceDefault() {
-        assertTrue(CompatibilityPreferences.resolveShortenCards(null, null, true))
+        assertTrue(CompatibilityPreferences.resolveShortenCards(null, true))
     }
 
     @Test fun savedOffWinsOverAutomaticOn() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(false, null, true))
-    }
-
-    @Test fun oldVisibleDescriptionWinsOverAutomaticOn() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(null, true, true))
+        assertFalse(CompatibilityPreferences.resolveShortenCards(false, true))
     }
 
     @Test fun unsetDefaultsToOff() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(null, null))
+        assertFalse(CompatibilityPreferences.resolveShortenCards(null))
     }
 
     @Test fun savedOnIsPreserved() {
-        assertTrue(CompatibilityPreferences.resolveShortenCards(true, null))
+        assertTrue(CompatibilityPreferences.resolveShortenCards(true))
     }
 
     @Test fun savedOffIsPreserved() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(false, null))
-    }
-
-    @Test fun savedOffWinsOverOldHiddenDescription() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(false, false))
-    }
-
-    @Test fun savedOnWinsOverOldVisibleDescription() {
-        assertTrue(CompatibilityPreferences.resolveShortenCards(true, true))
-    }
-
-    @Test fun oldVisibleDescriptionBecomesOff() {
-        assertFalse(CompatibilityPreferences.resolveShortenCards(null, true))
-    }
-
-    @Test fun oldHiddenDescriptionBecomesOn() {
-        assertTrue(CompatibilityPreferences.resolveShortenCards(null, false))
+        assertFalse(CompatibilityPreferences.resolveShortenCards(false))
     }
 }
