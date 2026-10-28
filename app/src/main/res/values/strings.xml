@@ -179,7 +179,7 @@
     </string-array>
     <string name="pref_key_shorten_card_content" translatable="false">KEY_SHORTEN_CARD_CONTENT</string>
     <string name="shorten_card_content">Shorten card content</string>
-    <string name="shorten_card_content_summary">Show the recording date and duration only. Turn off to also show the channel and program description.</string>
+    <string name="shorten_card_content_summary">Reduce the text on cards to make drawing lighter.</string>
     <string name="rule_row_loading">Loading recordings</string>
     <string name="rule_row_empty">No recordings</string>
     <string name="rule_row_error">Could not load. Select to retry.</string>
