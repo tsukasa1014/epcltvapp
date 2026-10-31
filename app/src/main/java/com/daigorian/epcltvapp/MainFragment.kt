@@ -2277,29 +2277,33 @@ class MainFragment : BrowseSupportFragment() {
             val category = Category.RECORDED_BY_RULES
             val previous = listRowsInCategory(category)
             if (previous == rows) return false
+            // 消える行は1行ずつ消す。ルール行は一覧の末尾にあり、Leanback の ListRowDataAdapter は
+            // 末尾に触れる通知を受けると行数を最終結果から数え直す。差分をまとめて通知すると、
+            // 同じまとまりの残りの通知を二重に数えて行数がずれ、存在しない行を読みに行って落ちる。
             val kept = rows.toHashSet()
-            if (rows == previous.filter { it in kept }) {
-                previous.filter { it !in kept }.forEach {
-                    removeRowFromCategory(category, it.headerItem.id)
-                }
-                return true
+            previous.filter { it !in kept }.forEach {
+                removeRowFromCategory(category, it.headerItem.id)
             }
+            if (rows == listRowsInCategory(category)) return true
             val start = numOfRowInCategory.copyOfRange(0, category.ordinal).sum()
             val oldCount = numOfRowInCategory[category.ordinal]
             val section = if (oldCount >= 2) listOf(get(start), get(start + 1)) else listOf(
                 DividerRow(), SectionRow(HeaderItem(-category.ordinal.toLong(), getString(R.string.by_rec_rules))))
             val items: List<Any> = if (rows.isEmpty()) emptyList() else section + rows
-            val updated = (0 until size()).map { get(it) }.toMutableList()
-            updated.subList(start, start + oldCount).clear()
-            updated.addAll(start, items)
             numOfRowInCategory[category.ordinal] = items.size
-            // Preserve row/card adapters and let Leanback track moved identities in one diff update.
             val started = SystemClock.elapsedRealtime()
-            super.setItems(updated, object : DiffCallback<Any>() {
-                override fun areItemsTheSame(oldItem: Any, newItem: Any) = oldItem === newItem
-                override fun areContentsTheSame(oldItem: Any, newItem: Any) = oldItem === newItem
-            })
-            Log.i(TAG, "ルール行の差分更新 rows=${rows.size} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+            if (oldCount == 0) {
+                // 初めて出すときはまとめて足す。挿入1回だけの通知なら ListRowDataAdapter も正しく数える。
+                super.addAll(start, items)
+            } else {
+                // 並べ替えと追加は「全体が変わった」とだけ伝える。ListRowDataAdapter は行の移動をもともと
+                // 全体の変更として扱うので、見え方は差分通知と変わらない。行とカードの Adapter はそのまま使い回す。
+                val updated = (0 until size()).map { get(it) }.toMutableList()
+                updated.subList(start, start + oldCount).clear()
+                updated.addAll(start, items)
+                super.setItems(updated, null)
+            }
+            Log.i(TAG, "ルール行の差し替え rows=${rows.size} 初回=${oldCount == 0} elapsedMs=${SystemClock.elapsedRealtime() - started}")
             return true
         }
 
