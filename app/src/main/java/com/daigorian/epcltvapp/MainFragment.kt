@@ -2490,6 +2490,10 @@ class MainFragment : BrowseSupportFragment() {
             else
                 listRowAdapter.size().toLong()
 
+            // 読み込み直しの後に届いた古い応答は捨てる。0件ルールを隠す設定では応答を見てから行を足すので、
+            // 捨てないと作り直した一覧に古い行が混ざる。
+            val generation = mRuleLoadGeneration
+
             // APIのコールバックでListRowの中身をセットするように仕掛ける
             // EPGStation V1.x.x
             EpgStation.api?.getRecorded(
@@ -2575,7 +2579,7 @@ class MainFragment : BrowseSupportFragment() {
                 keyword = v2Param.keyword,
                 hasOriginalFile = v2Param.hasOriginalFile )?.enqueue(object : Callback<Records> {
                 override fun onResponse(call: Call<Records>, response: Response<Records>) {
-                    if (!isUiAlive) return
+                    if (!isUiAlive || generation != mRuleLoadGeneration) return
                     response.body()?.let { getRecordedResponse ->
 
                         // 返却順を保ち、既存カードのIDを使った差分でまとめて反映する。
@@ -2629,7 +2633,7 @@ class MainFragment : BrowseSupportFragment() {
                     ruleOrder?.report(idInCategory, response.body()?.let { it.records.maxOfOrNull { r -> r.startAt } })
                 }
                 override fun onFailure(call: Call<Records>, t: Throwable) {
-                    if (!isUiAlive) return
+                    if (!isUiAlive || generation != mRuleLoadGeneration) return
                     Log.d(TAG,"loadRows() getRecorded API Failure")
                     ruleOrder?.report(idInCategory, null)
                     Toast.makeText(context!!, getString(R.string.connect_epgstation_failed), Toast.LENGTH_LONG).show()
