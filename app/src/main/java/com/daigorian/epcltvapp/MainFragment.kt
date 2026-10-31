@@ -124,9 +124,9 @@ class MainFragment : BrowseSupportFragment() {
      */
     private var mActiveRuleOrderCollector: RuleOrderCollector? = null
 
-    // --- 互換性モード（弱い端末・大量ルール向けの軽量読み込み） ---
-    /** 設定でONのとき、ルール行を必要になった分だけ作る。 */
-    private var mCompatibilityMode = false
+    // --- 遅延読み込み（大量ルール向け。設定「録画を後から読み込み」） ---
+    /** 設定でONのとき、ルール行は先に全部作り、録画は表示に合わせて読み込む。 */
+    private var mLazyLoad = false
     private var mLazyRuleLoader: LazyRuleRecordingLoader? = null
     private var mManualRecordingPager: ManualRecordingPager? = null
     private var mUserInteractionSerial = 0L
@@ -135,10 +135,10 @@ class MainFragment : BrowseSupportFragment() {
     /** ルールID → 行タイトル（キーワード or ルールID表記）。 */
     private val mRuleRowKeyword = HashMap<Long, String>()
 
-    /** 互換性モードが有効か。 */
-    private fun isCompatibilityMode(): Boolean =
+    /** 遅延読み込みが有効か。 */
+    private fun isLazyLoad(): Boolean =
         androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
-            .getBoolean(getString(R.string.pref_key_compatibility_mode), false)
+            .getBoolean(getString(R.string.pref_key_lazy_load), false)
 
     private val mCardPresenter = OriginalCardPresenter()
     private val mMainMenuListRowPresenter = ListRowPresenter()
@@ -196,7 +196,7 @@ class MainFragment : BrowseSupportFragment() {
                 if (lazyLoader != null) lazyLoader.setShowEmpty(showEmptyRules)
                 else if (showEmptyRules) updateRows() else mMainMenuAdapter.removeEmptyRuleRows()
             }
-            getString(R.string.pref_key_compatibility_mode) -> reloadContentRows()
+            getString(R.string.pref_key_lazy_load) -> reloadContentRows()
             getString(R.string.pref_key_request_concurrency) -> {
                 EpgStationV2.setRequestConcurrency(CompatibilityPreferences.requestConcurrency(requireContext()))
                 Log.i(TAG, "取得並列数を変更 concurrency=${EpgStationV2.requestConcurrency} priority=2")
@@ -750,8 +750,8 @@ class MainFragment : BrowseSupportFragment() {
                     // 足す順も orderedIds に合わせる。行を足すと同時にそのルールの録画を取りに行くので、
                     // 上に来るルール（最近録画されたもの）の録画が先に届き、開いてすぐ見られる。
                     val ruleById = rules.associateBy { rule -> rule.id }
-                    // 互換性モードの判定と、行タイトル（キーワード or ルールID表記）の控え。
-                    mCompatibilityMode = isCompatibilityMode()
+                    // 遅延読み込みの判定と、行タイトル（キーワード or ルールID表記）の控え。
+                    mLazyLoad = isLazyLoad()
                     mRuleRowKeyword.clear()
                     rules.forEach { rule ->
                         mRuleRowKeyword[rule.id.toLong()] =
@@ -761,7 +761,7 @@ class MainFragment : BrowseSupportFragment() {
                                 rule.searchOption?.keyword!!
                             }
                     }
-                    if (mCompatibilityMode) {
+                    if (mLazyLoad) {
                         mLazyRuleLoader?.close()
                         mManualRecordingPager?.close()
                         ensureManualRecordedRow()
@@ -881,7 +881,7 @@ class MainFragment : BrowseSupportFragment() {
         mManualRecordingPager?.close()
         mManualRecordingPager = null
         mRowCardSelections.clear()
-        mCompatibilityMode = false
+        mLazyLoad = false
         mActiveRuleOrderCollector = null
         mRuleRowKeyword.clear()
     }

@@ -147,10 +147,10 @@
             app:title="@string/compatibility_settings">
 
             <SwitchPreference
-                app:key=         "@string/pref_key_compatibility_mode"
+                app:key=         "@string/pref_key_lazy_load"
                 app:defaultValue="false"
-                app:title=       "@string/reduce_recording_load"
-                app:summary=     "@string/compatibility_mode_summary" />
+                app:title=       "@string/lazy_load"
+                app:summary=     "@string/lazy_load_summary" />
 
             <ListPreference
                 app:key=         "@string/pref_key_request_concurrency"
