@@ -25,9 +25,4 @@ object CompatibilityPreferences {
 
     internal fun shouldAutoShortenCards(sdkInt: Int): Boolean =
         sdkInt <= Build.VERSION_CODES.N_MR1
-
-    fun requestConcurrency(context: Context): Int = RequestConcurrency.fromPreference(
-        PreferenceManager.getDefaultSharedPreferences(context)
-            .getString(context.getString(R.string.pref_key_request_concurrency), null)
-    )
 }

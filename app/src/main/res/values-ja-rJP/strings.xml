@@ -73,15 +73,14 @@
     <string name="compatibility_settings">互換性設定</string>
     <string name="lazy_load">録画を後から読み込み</string>
     <string name="lazy_load_summary">起動時に読み込む量を減らし起動後すぐに操作できるようにします。</string>
-    <string name="request_concurrency">取得並列数の変更</string>
-    <string name="request_concurrency_summary">EPGStation v2の一覧取得：%1$s。追加取得は別枠で最大2並列です。</string>
+    <string name="request_concurrency">同時接続数</string>
     <string-array name="pref_options_request_concurrency_label">
-        <item>OFF（標準の5並列）</item>
-        <item>2並列</item>
-        <item>4並列</item>
-        <item>5並列</item>
-        <item>8並列</item>
-        <item>12並列</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>5 (デフォルト)</item>
+        <item>8</item>
+        <item>13</item>
     </string-array>
     <string name="shorten_card_content">カード内容の短縮</string>
     <string name="shorten_card_content_summary">カードから文字を減らして描画処理を軽くします。</string>

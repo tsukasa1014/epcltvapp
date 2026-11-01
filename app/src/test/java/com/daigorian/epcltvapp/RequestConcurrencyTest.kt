@@ -8,7 +8,7 @@ class RequestConcurrencyTest {
     @Test
     fun `既定値と選択肢は仕様どおり`() {
         assertEquals(5, RequestConcurrency.DEFAULT)
-        assertEquals(listOf(2, 4, 5, 8, 12), RequestConcurrency.CHOICES)
+        assertEquals(listOf(1, 2, 3, 5, 8, 13), RequestConcurrency.CHOICES)
     }
 
     @Test
@@ -31,10 +31,10 @@ class RequestConcurrencyTest {
             " ",
             "-2",
             "0",
-            "1",
-            "3",
+            "4",
             "6",
-            "13",
+            "12",
+            "21",
             "2.0",
             "many",
             "default"
@@ -55,7 +55,7 @@ class RequestConcurrencyTest {
             assertEquals(value, RequestConcurrency.fromValue(value))
         }
 
-        listOf(Int.MIN_VALUE, -2, 0, 1, 3, 6, 13, Int.MAX_VALUE).forEach { value ->
+        listOf(Int.MIN_VALUE, -2, 0, 4, 6, 12, 21, Int.MAX_VALUE).forEach { value ->
             assertEquals(
                 "value=$value",
                 RequestConcurrency.DEFAULT,

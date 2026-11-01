@@ -198,8 +198,8 @@ class MainFragment : BrowseSupportFragment() {
             }
             getString(R.string.pref_key_lazy_load) -> reloadContentRows()
             getString(R.string.pref_key_request_concurrency) -> {
-                EpgStationV2.setRequestConcurrency(CompatibilityPreferences.requestConcurrency(requireContext()))
-                Log.i(TAG, "取得並列数を変更 concurrency=${EpgStationV2.requestConcurrency} priority=2")
+                EpgStationV2.setRequestConcurrency(RequestConcurrency.read(requireContext()))
+                Log.i(TAG, "同時接続数を変更 concurrency=${EpgStationV2.requestConcurrency} priority=${EpgStationV2.priorityConcurrency}")
                 mLazyRuleLoader?.onConcurrencyChanged()
             }
             getString(R.string.pref_key_shorten_card_content) -> {
@@ -255,7 +255,7 @@ class MainFragment : BrowseSupportFragment() {
         }
 
         CompatibilityPreferences.migrate(requireContext())
-        EpgStationV2.setRequestConcurrency(CompatibilityPreferences.requestConcurrency(requireContext()))
+        EpgStationV2.setRequestConcurrency(RequestConcurrency.read(requireContext()))
         // プレイヤー設定などデフォルト値をSharedPreferencesに書き込む（初回のみ）
         androidx.preference.PreferenceManager.setDefaultValues(requireContext(), R.xml.preferences, false)
 

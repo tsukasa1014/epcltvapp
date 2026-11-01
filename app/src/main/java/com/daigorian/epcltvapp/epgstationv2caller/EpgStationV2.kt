@@ -130,18 +130,31 @@ object EpgStationV2 {
         maxRequestsPerHost = RequestConcurrency.DEFAULT
     }
 
+    /**
+     * [priorityApi] の Dispatcher。こちらも作り直さずに共有する。
+     * 同時接続数の設定が [PRIORITY_MAX_REQUESTS] より小さいときは、それに合わせて絞る。
+     */
+    private val priorityDispatcher = Dispatcher().apply {
+        maxRequests = PRIORITY_MAX_REQUESTS
+        maxRequestsPerHost = PRIORITY_MAX_REQUESTS
+    }
+
     @Volatile
     private var requestConcurrencyValue: Int = RequestConcurrency.DEFAULT
 
-    /** 現在の EPGStation v2 取得並列数。 */
+    /** 現在の EPGStation v2 への同時接続数（[api] 側）。 */
     val requestConcurrency: Int
         get() = requestConcurrencyValue
+
+    /** 現在の [priorityApi] 側の同時接続数。 */
+    val priorityConcurrency: Int
+        get() = priorityDispatcher.maxRequestsPerHost
 
     private var okHttpClientBuilder = OkHttpClient.Builder()
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
         .writeTimeout(5, TimeUnit.SECONDS)
-        // 既定は5。最適な並列数はサーバーや回線によって変わる。
+        // 既定は5。サーバーの負荷を抑えたい環境では、設定の同時接続数で減らせる。
         .dispatcher(requestDispatcher)
 
     var api: ApiInterface? = null
@@ -234,12 +247,17 @@ object EpgStationV2 {
     /**
      * 既存 client の Dispatcher の上限だけを変更する。
      * 不正値は [RequestConcurrency.DEFAULT] に戻し、実行中の call はキャンセルしない。
+     * 割り込み用の [priorityApi] も、設定値が小さいときはそれに合わせる。合わせないと、
+     * 1を選んでもサーバーには割り込み用の2本を足した3本が同時に届く。
      */
     fun setRequestConcurrency(value: Int) {
         val normalized = RequestConcurrency.fromValue(value)
         requestConcurrencyValue = normalized
         requestDispatcher.maxRequests = normalized
         requestDispatcher.maxRequestsPerHost = normalized
+        val priority = minOf(PRIORITY_MAX_REQUESTS, normalized)
+        priorityDispatcher.maxRequests = priority
+        priorityDispatcher.maxRequestsPerHost = priority
     }
 
     fun initAPI(_baseUrl:String){
@@ -275,13 +293,13 @@ object EpgStationV2 {
     /** [priorityApi] 用のクライアント。待ち行列だけを分ける（接続プールは [base] と共有する）。 */
     private fun priorityClient(base: OkHttpClient): OkHttpClient =
         base.newBuilder()
-            .dispatcher(Dispatcher().apply {
-                maxRequests = PRIORITY_MAX_REQUESTS
-                maxRequestsPerHost = PRIORITY_MAX_REQUESTS
-            })
+            .dispatcher(priorityDispatcher)
             .build()
 
-    /** 割り込み用クライアントが同時に走らせる数。ルール一覧の取得に接続を割いておく。 */
+    /**
+     * 割り込み用クライアントが同時に走らせる数の上限。ルール一覧の取得に接続を割いておく。
+     * 同時接続数の設定がこれより小さいときは、そちらに合わせる（[setRequestConcurrency]）。
+     */
     private const val PRIORITY_MAX_REQUESTS = 2
 
     class BasicAuthInterceptor(user: String, password: String) : Interceptor {
