@@ -1032,6 +1032,8 @@ class MainFragment : BrowseSupportFragment() {
                 val row = mMainMenuAdapter.get(position) as? ListRow
                 row?.headerItem?.id?.let { ruleIdFromHeaderId(it) }?.let { target.add(it) }
             }
+            // 見えている行の取り直しは下の経路と同じ条件にする（戻った直後は全部、それ以外は間隔を空けて）。
+            val visibleRuleIds = target.toList()
             var following = (positions.maxOrNull() ?: selectedPosition) + 1
             var prefetched = 0
             while (following < mMainMenuAdapter.size() && prefetched < 3) {
@@ -1041,6 +1043,11 @@ class MainFragment : BrowseSupportFragment() {
                 prefetched++
             }
             loader.updateViewport(target)
+            val refreshed = loader.refreshRows(visibleRuleIds, if (ignoreCooldown) 0L else RULE_ROW_REFRESH_COOLDOWN_MS)
+            if (refreshed.isNotEmpty()) {
+                Log.i(TAG, "可視行の取り直し: ${refreshed.size}行 ルール=$refreshed 復帰直後=$ignoreCooldown")
+            }
+            if (ignoreCooldown) refreshVisibleManualRecordedCards()
             return
         }
         val now = SystemClock.elapsedRealtime()

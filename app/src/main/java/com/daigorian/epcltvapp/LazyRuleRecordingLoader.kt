@@ -39,6 +39,8 @@ class LazyRuleRecordingLoader(
         var total: Int? = null
         var initialLoaded = false
         var failed = false
+        /** When the row's first page was last asked of the server (elapsedRealtime). Drives [refreshRows]. */
+        var fetchedAt = 0L
     }
 
     private val states = ruleIds.associateWith { id ->
@@ -55,6 +57,7 @@ class LazyRuleRecordingLoader(
     private val deletedRecordIds = HashSet<Long>()
     private val viewport = LinkedHashSet<Long>()
     private val pagesRequested = LinkedHashSet<Long>()
+    private val refreshRequested = LinkedHashSet<Long>()
     private var disposed = false
     private var indexStarted = false
     private var indexInFlight = 0
@@ -134,6 +137,7 @@ class LazyRuleRecordingLoader(
                     state.seedBuffer.addAll(group.drop(PAGE_SIZE.toInt()))
                     state.offset = state.records.size.toLong()
                     state.initialLoaded = state.records.size >= PAGE_SIZE
+                    state.fetchedAt = android.os.SystemClock.elapsedRealtime()
                     // The global response total must not become a per-rule total.
                     render(id)
                 }
@@ -201,6 +205,7 @@ class LazyRuleRecordingLoader(
                         state.records.addAll(body.records.filterNot { it.id in deletedRecordIds })
                         if (state.records.size != body.records.size) state.offset = 0
                         state.initialLoaded = body.total <= state.records.size
+                        state.fetchedAt = android.os.SystemClock.elapsedRealtime()
                         render(id)
                     }
                     if (index.completedCount % 100 == 0 || index.isComplete) {
@@ -279,6 +284,24 @@ class LazyRuleRecordingLoader(
         pumpRows()
     }
 
+    /**
+     * Re-reads, from the top, the cards already shown in [ruleIds] whose first page is older than [maxAgeMs],
+     * so that changes made elsewhere (protection on the details screen, other clients) reach rows that were
+     * loaded earlier. The rule order is left as it is. Returns the rules queued.
+     */
+    fun refreshRows(ruleIds: Collection<Long>, maxAgeMs: Long): List<Long> {
+        if (!alive() || !rowsPublished) return emptyList()
+        val now = android.os.SystemClock.elapsedRealtime()
+        val queued = ruleIds.filter { id ->
+            val state = states[id] ?: return@filter false
+            state.initialLoaded && !state.failed && now - state.fetchedAt >= maxAgeMs && refreshRequested.add(id)
+        }
+        // Counted from the request, as the non-lazy rows do, so a sweep during the request does not queue it again.
+        queued.forEach { states.getValue(it).fetchedAt = now }
+        if (queued.isNotEmpty()) pumpRows()
+        return queued
+    }
+
     fun removeRecorded(recordId: Long) {
         if (!deletedRecordIds.add(recordId)) return
         var hideEmpty = false
@@ -314,6 +337,13 @@ class LazyRuleRecordingLoader(
     private fun pumpRows() {
         if (!alive() || !seedReady) return
         val api = EpgStationV2.priorityApi ?: EpgStationV2.api ?: return
+        for (id in refreshRequested.toList()) {
+            if (rowInFlight.size >= ROW_CONCURRENCY) break
+            if (rowInFlight.contains(id) || indexRulesInFlight.contains(id)) continue
+            refreshRequested.remove(id)
+            val state = states.getValue(id)
+            if (state.initialLoaded && !state.failed) requestRefresh(api, id, state)
+        }
         val candidates = (pagesRequested + viewport).toList()
         for (id in candidates) {
             if (rowInFlight.size >= ROW_CONCURRENCY) break
@@ -351,6 +381,7 @@ class LazyRuleRecordingLoader(
             }
             val offset = state.offset
             val limit = RecordedPageProgress.requestLimit(state.records.size, PAGE_SIZE)
+            if (offset == 0L) state.fetchedAt = android.os.SystemClock.elapsedRealtime()
             Log.i(TAG, "row request rule=$id offset=$offset limit=$limit active=${rowInFlight.size}")
             val call = api.getRecorded(ruleId = id, offset = offset, limit = limit, isReverse = false)
             calls.add(call)
@@ -389,6 +420,44 @@ class LazyRuleRecordingLoader(
         }
     }
 
+    /** Replaces the row with as many cards as it already shows (at least a page), as the server has them now. */
+    private fun requestRefresh(api: EpgStationV2.ApiInterface, id: Long, state: State) {
+        val limit = maxOf(state.records.size.toLong(), PAGE_SIZE)
+        rowInFlight.add(id)
+        Log.i(TAG, "row refresh rule=$id limit=$limit active=${rowInFlight.size}")
+        val call = api.getRecorded(ruleId = id, offset = 0, limit = limit, isReverse = false)
+        calls.add(call)
+        rowCalls[id] = call
+        call.enqueue(object : Callback<Records> {
+            override fun onResponse(call: Call<Records>, response: Response<Records>) =
+                finish(response.body()?.takeIf { response.isSuccessful })
+
+            override fun onFailure(call: Call<Records>, t: Throwable) = finish(null)
+
+            private fun finish(body: Records?) {
+                calls.remove(call)
+                if (!alive()) return
+                if (rowCalls[id] !== call) return
+                rowCalls.remove(id)
+                rowInFlight.remove(id)
+                // A failed refresh keeps what the row already shows.
+                if (body != null) {
+                    state.records.clear()
+                    state.records.addAll(body.records.filter { it.id !in deletedRecordIds })
+                    // Later pages come from the server, not from what the startup page left over.
+                    state.seedBuffer.clear()
+                    state.offset = RecordedPageProgress.nextOffset(0, body.records.size)
+                    state.total = body.total
+                    render(id)
+                    if (!showEmpty && body.total == 0) publishRows(sort = false)
+                }
+                Log.i(TAG, "row refreshed rule=$id count=${state.records.size} ok=${body != null}")
+                onContentsChanged()
+                pumpRows()
+            }
+        })
+    }
+
     private fun render(id: Long) {
         val state = states.getValue(id)
         val adapter = state.row.adapter as ArrayObjectAdapter
@@ -404,15 +473,14 @@ class LazyRuleRecordingLoader(
                 else -> RuleRowPlaceholder.Status.LOADING
             }))
         }
-        // Keep the selected card in place while appending; never clear a focusable row.
-        var common = 0
-        while (common < minOf(adapter.size(), items.size) && adapter.get(common) == items[common]) common++
-        if (common < minOf(adapter.size(), items.size)) {
-            adapter.replace(common, items[common])
-            common++
+        // Keep the selected card in place: replace only the cards that changed, then trim or append.
+        // Never clear a focusable row.
+        val shared = minOf(adapter.size(), items.size)
+        for (i in 0 until shared) {
+            if (adapter.get(i) != items[i]) adapter.replace(i, items[i])
         }
-        if (adapter.size() > common) adapter.removeItems(common, adapter.size() - common)
-        if (items.size > common) adapter.addAll(common, items.drop(common))
+        if (adapter.size() > shared) adapter.removeItems(shared, adapter.size() - shared)
+        if (items.size > shared) adapter.addAll(shared, items.drop(shared))
     }
 
     companion object {
