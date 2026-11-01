@@ -4,7 +4,8 @@ import android.content.Context
 import android.os.Build
 import androidx.preference.PreferenceManager
 
-object CompatibilityPreferences {
+/** 設定「カード内容の短縮」の読み出しと、端末に応じた既定値の書き込み。 */
+object ShortenCardContentPreferences {
     fun migrate(context: Context) {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val shortKey = context.getString(R.string.pref_key_shorten_card_content)

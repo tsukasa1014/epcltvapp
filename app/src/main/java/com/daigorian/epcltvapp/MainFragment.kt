@@ -254,7 +254,7 @@ class MainFragment : BrowseSupportFragment() {
             refreshDiskUsage()
         }
 
-        CompatibilityPreferences.migrate(requireContext())
+        ShortenCardContentPreferences.migrate(requireContext())
         EpgStationV2.setRequestConcurrency(RequestConcurrency.read(requireContext()))
         // プレイヤー設定などデフォルト値をSharedPreferencesに書き込む（初回のみ）
         androidx.preference.PreferenceManager.setDefaultValues(requireContext(), R.xml.preferences, false)

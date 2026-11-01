@@ -204,7 +204,7 @@ class OriginalCardPresenter() : Presenter() {
             true
         }
 
-        val shortened = CompatibilityPreferences.shortenCards(cardView.context)
+        val shortened = ShortenCardContentPreferences.shortenCards(cardView.context)
         // 設定を変えた直後だけ反映する（毎回 setMaxLines すると requestLayout が積もる）
         val wantContentLines = if (shortened && (item is RecordedProgram || item is RecordedItem)) 1 else 4
         cardView.findViewById<TextView>(LeanbackR.id.content_text).let { tv ->
