@@ -180,7 +180,6 @@
     <string name="shorten_card_content">Shorten card content</string>
     <string name="shorten_card_content_summary">Reduce the text on cards to make drawing lighter.</string>
     <string name="rule_row_loading">Loading recordings</string>
-    <string name="rule_row_empty">No recordings</string>
     <string name="rule_row_error">Could not load. Select to retry.</string>
 
     <!-- Actions on the settings root screen -->

@@ -60,7 +60,6 @@ class ManualRecordingPager(
         tail = nextTail
         lastSelectedTail = nextTail?.takeIf { result.failed }
         if (nextTail != null) items.add(nextTail)
-        if (items.isEmpty()) items.add(RuleRowPlaceholder(-1L, RuleRowPlaceholder.Status.EMPTY))
         replaceContentsWithoutEmptyFrame(items)
         onContentsChanged()
         pump()
@@ -286,23 +285,18 @@ class ManualRecordingPager(
         when {
             previous === next -> Unit
             index >= 0 && next != null -> adapter.replace(index, next)
-            index >= 0 && next == null && adapter.size() == 1 ->
-                adapter.replace(index, RuleRowPlaceholder(-1L, RuleRowPlaceholder.Status.EMPTY))
             index >= 0 && next == null -> adapter.removeItems(index, 1)
             next != null -> adapter.add(next)
-            adapter.size() == 0 ->
-                adapter.add(RuleRowPlaceholder(-1L, RuleRowPlaceholder.Status.EMPTY))
         }
     }
 
     /**
      * 先頭の placeholder を残したまま内容を差し替え、0件フレームを作らない。
+     * 録画が1件も無ければ、まとめて読み込む方式と同じく空の行にする。
      */
     private fun replaceContentsWithoutEmptyFrame(items: List<Any>) {
         if (items.isEmpty()) {
-            if (adapter.size() == 0) {
-                adapter.add(RuleRowPlaceholder(-1L, RuleRowPlaceholder.Status.EMPTY))
-            }
+            if (adapter.size() > 0) adapter.removeItems(0, adapter.size())
             return
         }
         if (adapter.size() == 0) {

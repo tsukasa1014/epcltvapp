@@ -104,7 +104,6 @@ class OriginalCardPresenter() : Presenter() {
             cardView.mainImage = mDefaultCardImage
             cardView.titleText = cardView.context.getString(when (item.status) {
                 RuleRowPlaceholder.Status.LOADING -> R.string.rule_row_loading
-                RuleRowPlaceholder.Status.EMPTY -> R.string.rule_row_empty
                 RuleRowPlaceholder.Status.ERROR -> R.string.rule_row_error
             })
             cardView.contentText = ""

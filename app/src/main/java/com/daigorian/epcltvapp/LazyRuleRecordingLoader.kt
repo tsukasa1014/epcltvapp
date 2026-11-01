@@ -12,9 +12,12 @@ import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 
-/** A real, focusable card keeps unloaded/empty rows from collapsing in Leanback. */
+/**
+ * A real, focusable card for a row that is still loading or failed to load.
+ * A row found empty shows no card, the same as the rows loaded all at once.
+ */
 data class RuleRowPlaceholder(val ruleId: Long, val status: Status) {
-    enum class Status { LOADING, EMPTY, ERROR }
+    enum class Status { LOADING, ERROR }
 }
 
 /** Focusing this blank card requests the next horizontal page. */
@@ -467,14 +470,12 @@ class LazyRuleRecordingLoader(
             } else if (state.initialLoaded && (state.total == null || state.offset < state.total!!)) {
                 listOf(RuleRowContinuation(id, state.offset))
             } else emptyList()
-            else -> listOf(RuleRowPlaceholder(id, when {
-                state.failed -> RuleRowPlaceholder.Status.ERROR
-                state.total == 0 || (state.initialLoaded && state.offset >= (state.total ?: Int.MAX_VALUE)) -> RuleRowPlaceholder.Status.EMPTY
-                else -> RuleRowPlaceholder.Status.LOADING
-            }))
+            state.failed -> listOf(RuleRowPlaceholder(id, RuleRowPlaceholder.Status.ERROR))
+            // An empty rule leaves an empty row, as the rows loaded all at once do.
+            state.total == 0 || (state.initialLoaded && state.offset >= (state.total ?: Int.MAX_VALUE)) -> emptyList()
+            else -> listOf(RuleRowPlaceholder(id, RuleRowPlaceholder.Status.LOADING))
         }
         // Keep the selected card in place: replace only the cards that changed, then trim or append.
-        // Never clear a focusable row.
         val shared = minOf(adapter.size(), items.size)
         for (i in 0 until shared) {
             if (adapter.get(i) != items[i]) adapter.replace(i, items[i])
