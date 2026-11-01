@@ -1203,7 +1203,10 @@ class MainFragment : BrowseSupportFragment() {
         }
         val cardPosition = exact ?: anchor.cardPosition?.coerceAtMost(row.adapter.size() - 1)?.takeIf { it >= 0 }
         val task = cardPosition?.let { ListRowPresenter.SelectItemViewHolderTask(it).apply { setSmoothScroll(false) } }
-        setSelectedPosition(rowPosition, false, task)
+        // 行の一覧側だけで選び直す。BrowseSupportFragment.setSelectedPosition に task を渡すと
+        // startHeadersTransition(false) が走り、開いている左メニューが閉じてカードへフォーカスが移る。
+        // 左メニューの選択は、行の選択が変わったときに BrowseSupportFragment が合わせてくれる。
+        rowsSupportFragment?.setSelectedPosition(rowPosition, false, task)
         Log.i(TAG, "ルール順更新の選択復元 rowId=${anchor.rowId} recordId=${anchor.recordId} card=$cardPosition")
         if (anchor.cardsFocused && cardPosition != null) {
             val serial = mUserInteractionSerial
